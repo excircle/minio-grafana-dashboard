@@ -23,8 +23,8 @@ services:
     volumes:
       - ./minio-data1:/data1
     ports:
-      - "9000:9000"
-      - "9090:9090"
+      - "9100:9000"
+      - "9190:9090"
   minio2:
     <<: *minio-common
     hostname: minio-docker-compose
@@ -39,6 +39,17 @@ services:
     container_name: grafana
     restart: unless-stopped
     ports:
-      - '3000:3000'
+      - 3000:3000
     volumes:
       - ./grafana:/var/lib/grafana
+  prometheus:
+    image: prom/prometheus
+    container_name: prom
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - 9090:9090
+    restart: unless-stopped
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - ./prom-data:/prometheus
