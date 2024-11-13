@@ -11,7 +11,7 @@ module "minio-vpc" {
 
 
 module "minio-cluster-1" {
-  source = "./modules/tf-aws-minio-node"
+  source = "github.com/excircle/tf-aws-minio-node"
 
   application_name          = "minio-clstr1-node"
   system_user               = "ubuntu"
