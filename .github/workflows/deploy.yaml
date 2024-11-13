@@ -1,0 +1,154 @@
+name: MinIO Deployment
+
+on:
+  push:
+    branches:
+      - terraform-aws
+
+env:
+  destroy: true
+
+jobs:
+  set-condition:
+    runs-on: ubuntu-latest
+    outputs:
+      run-job: ${{ steps.set-output.outputs.RUN_JOB }}
+    steps:
+      - name: Set condition
+        id: set-output
+        run: |
+          echo "RUN_JOB=${{ env.destroy }}" >> $GITHUB_OUTPUT
+  build:
+    needs: set-condition
+    if: needs.set-condition.outputs.run-job == 'false'
+    runs-on: ubuntu-latest
+    env:
+      AWS_DEFAULT_REGION: "us-west-2"
+    steps:
+      - name: "Check if TF_STATE_FILE does not exist"
+        env: 
+            super_secret: ${{ secrets.TF_STATE_FILE }}
+        run: |
+          if [ -z "${{ env.super_secret }}" ]; then
+            echo "TF_STATE_FILE is not set"
+            echo "STATE_EXISTS=false" >> $GITHUB_ENV
+          else
+            echo "TF_STATE_FILE is set"
+            echo "STATE_EXISTS=true" >> $GITHUB_ENV
+          fi
+      # 1.) Set up AWS credentials & Terraform
+      - name: Configure AWS credentials
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set region $AWS_DEFAULT_REGION
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          ref: ubuntu #<- Define the branch you wish to use.
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: 1.1.7
+
+      - name: Initialize Terraform
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Export SSH Key
+        run: echo "TF_VAR_sshkey=${{ secrets.SSHKEY }}" >> $GITHUB_ENV
+
+      # 2.) STATE_EXISTS is false, so we need to create a new Terraform State File & save it as a GitHub Secret
+      - name: Apply New Terraform
+        if: ${{ env.STATE_EXISTS == 'false' }}
+        working-directory: ./terraform
+        run: terraform apply -auto-approve
+
+      - name: Read State File into Env Var
+        if: ${{ env.STATE_EXISTS == 'false' }}
+        id: read_tf_file
+        run: |
+          {
+            echo 'tf_content<<EOF'
+            cat terraform/terraform.tfstate
+            echo EOF
+          } >> "$GITHUB_ENV"
+
+      - name: Save State File As Secret
+        if: ${{ env.STATE_EXISTS == 'false' }}
+        uses: gliech/create-github-secret-action@v1
+        with:
+          name: TF_STATE_FILE
+          value: ${{ env.tf_content }}
+          pa_token: ${{ secrets.PA_TOKEN }}
+
+  destroy:
+    needs: set-condition
+    if: needs.set-condition.outputs.run-job == 'true'
+    runs-on: ubuntu-latest
+    env:
+      AWS_DEFAULT_REGION: "us-west-2"
+    steps:
+      - name: "Check if TF_STATE_FILE does not exist"
+        env: 
+            super_secret: ${{ secrets.TF_STATE_FILE }}
+        run: |
+          if [ -z "${{ env.super_secret }}" ]; then
+            echo "TF_STATE_FILE is not set"
+            echo "STATE_EXISTS=false" >> $GITHUB_ENV
+          else
+            echo "TF_STATE_FILE is set"
+            echo "STATE_EXISTS=true" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS credentials
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set region $AWS_DEFAULT_REGION
+          
+      - name: Checkout code
+        if: ${{ env.STATE_EXISTS == 'true' }}
+        uses: actions/checkout@v2
+        with:
+          ref: ubuntu #<- Define the branch you wish to use.
+      
+      - name: Write TF_STATE_FILE to file
+        if: ${{ env.STATE_EXISTS == 'true' }}
+        run: |
+         sudo tee terraform/terraform.tfstate > /dev/null << 'EOF'
+          ${{ secrets.TF_STATE_FILE }}
+         EOF
+
+      - name: Set up Terraform
+        if: ${{ env.STATE_EXISTS == 'true' }}
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: 1.1.7
+
+      - name: Initialize Terraform
+        if: ${{ env.STATE_EXISTS == 'true' }}
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Export SSH Key
+        if: ${{ env.STATE_EXISTS == 'true' }}
+        run: echo "TF_VAR_sshkey=${{ secrets.SSHKEY }}" >> $GITHUB_ENV
+
+      - name: Apply New Terraform
+        if: ${{ env.STATE_EXISTS == 'true' }}
+        working-directory: ./terraform
+        run: terraform destroy -auto-approve -lock=false
+
+      - name: TF State Count
+        if: ${{ env.STATE_EXISTS == 'true' }}
+        working-directory: ./terraform
+        run: terraform state list | wc -l
