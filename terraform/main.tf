@@ -15,7 +15,7 @@ module "minio-cluster-1" {
 
   application_name          = "minio-clstr1-node"
   system_user               = "ubuntu"
-  hosts                     = 4                              # Number of nodes with MinIO installed
+  hosts                     = 1                              # Number of nodes with MinIO installed
   vpc_id                    = module.minio-vpc.vpc_id
   ebs_root_volume_size      = 10
   ebs_storage_volume_size   = 10
